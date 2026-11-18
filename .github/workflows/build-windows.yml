@@ -1,22 +1,32 @@
-name: Compilar LENSShell DLL (VS2026)
+name: Compilar LENSShell DLL (VS2026 instalado en runtime)
 
 on:
   workflow_dispatch:
 
 jobs:
   build:
-    # 🎯 CLAVE: Usar la imagen que SÍ tiene Visual Studio 2026
-    runs-on: windows-2025-vs2026
+    # Usamos windows-latest. La instalación de VS 2026 se hace en un paso.
+    runs-on: windows-latest
 
     steps:
       - name: Descargar codigo fuente
         uses: actions/checkout@v4
 
-      - name: Configurar entorno Visual Studio 2026
-        uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: x64
-          vsversion: "2026"   # Fuerza la búsqueda de VS 2026
+      - name: Instalar Visual Studio 2026 Build Tools
+        shell: pwsh
+        run: |
+          Write-Host "Instalando VS 2026 Build Tools..."
+          choco install visualstudio2026buildtools `
+            --package-parameters "--add Microsoft.VisualStudio.Workload.VCTools --add Microsoft.VisualStudio.Component.VC.Tools.x86.x64 --includeRecommended --quiet" `
+            -y --ignore-package-exit-codes=3010
+          Write-Host "Instalacion de VS 2026 finalizada."
+
+      - name: Configurar entorno de compilacion (VS 2026)
+        shell: cmd
+        run: |
+          # Inicializa explicitamente el entorno de VS 2026 (ruta por defecto de Chocolatey)
+          call "C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\Common7\Tools\VsDevCmd.bat" -arch=x64
+          echo "Entorno de VS 2026 configurado."
 
       - name: Configurar VCPKG_ROOT
         shell: pwsh
