@@ -52,12 +52,13 @@ jobs:
           #    - CMAKE_COMPILE_WARNING_AS_ERROR=OFF (desactiva /WX automático)
           #    - /wd4251 (silencia C4251 a nivel de compilador, inmune a /WX)
           cmake -B build -G Ninja `
-            -DCMAKE_BUILD_TYPE=Release `
-            -DCMAKE_TOOLCHAIN_FILE="C:/vcpkg/scripts/buildsystems/vcpkg.cmake" `
-            -DVCPKG_TARGET_TRIPLET=x64-windows-static `
-            -DBUILD_TESTING=OFF `
-            -DCMAKE_COMPILE_WARNING_AS_ERROR=OFF `
-            -DCMAKE_CXX_FLAGS="/wd4251"
+              -DCMAKE_BUILD_TYPE=Release `
+              -DCMAKE_TOOLCHAIN_FILE="C:/vcpkg/scripts/buildsystems/vcpkg.cmake" `
+              -DVCPKG_TARGET_TRIPLET=x64-windows-static `
+              -DBUILD_TESTING=OFF `
+              -DCMAKE_COMPILE_WARNING_AS_ERROR=OFF `
+              -DCMAKE_CXX_FLAGS="/wd4251" `
+              -DCMAKE_SHARED_LINKER_FLAGS="/LIBPATH:C:\vcpkg\installed\x64-windows-static\lib"
 
           # 3. Compilar el motor
           cmake --build build --config Release --target ExplorerLensEngine
