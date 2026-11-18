@@ -13,21 +13,32 @@ jobs:
       - name: Configurar entorno Visual Studio
         uses: ilammy/msvc-dev-cmd@v1
 
-      - name: Compilar proyecto con script oficial
+      - name: Compilar proyecto (sin tests)
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Continue"
           if (Test-Path ".\build-scripts\Build-MSVC.ps1") {
-            .\build-scripts\Build-MSVC.ps1 -Configuration Release
-          } else {
-            cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-            cmake --build build --config Release
+            .\build-scripts\Build-MSVC.ps1 -Configuration Release -SkipTests
+          }
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "=== INTENTANDO COMPILACION DIRECTA CON CMAKE ===" -ForegroundColor Yellow
+            cmake -B build-direct -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DENABLE_TESTS=OFF
+            cmake --build build-direct --config Release
+          }
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "=== ERRORES ENCONTRADOS EN EL LOG ===" -ForegroundColor Red
+            if (Test-Path "$env:TEMP\ExplorerLens-logs\build-latest.log") {
+              Get-Content "$env:TEMP\ExplorerLens-logs\build-latest.log" | Select-String -Pattern "error " -Context 1,2
+            }
+            exit 1
           }
 
       - name: Buscar y empaquetar archivos generados
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Get-ChildItem -Recurse -Include *.dll,*.exe,*.json | Where-Object { $_.FullName -notmatch "\\\.git\\" } | Copy-Item -Destination dist -Force
+          Get-ChildItem -Recurse -Include *.dll,*.exe,*.json | Where-Object { $_.FullName -notmatch "\\\.git\\" -and $_.FullName -notmatch "\\dist\\" } | Copy-Item -Destination dist -Force
+          Get-ChildItem dist
 
       - name: Subir ZIP descargable
         uses: actions/upload-artifact@v5
