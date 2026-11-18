@@ -13,35 +13,41 @@ jobs:
       - name: Configurar entorno Visual Studio
         uses: ilammy/msvc-dev-cmd@v1
 
-      - name: Compilar proyecto (sin tests)
+      - name: Compilar y capturar diagnostico
         shell: pwsh
         run: |
-          $ErrorActionPreference = "Continue"
-          if (Test-Path ".\build-scripts\Build-MSVC.ps1") {
-            .\build-scripts\Build-MSVC.ps1 -Configuration Release -SkipTests
+          try {
+            .\build-scripts\Build-MSVC.ps1 -Configuration Release
           }
-          if ($LASTEXITCODE -ne 0) {
-            Write-Host "=== INTENTANDO COMPILACION DIRECTA CON CMAKE ===" -ForegroundColor Yellow
-            cmake -B build-direct -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DENABLE_TESTS=OFF
-            cmake --build build-direct --config Release
-          }
-          if ($LASTEXITCODE -ne 0) {
-            Write-Host "=== ERRORES ENCONTRADOS EN EL LOG ===" -ForegroundColor Red
-            if (Test-Path "$env:TEMP\ExplorerLens-logs\build-latest.log") {
-              Get-Content "$env:TEMP\ExplorerLens-logs\build-latest.log" | Select-String -Pattern "error " -Context 1,2
+          catch {
+            Write-Host "=== SCRIPT OFICIAL FALLO, LEYENDO LOG ===" -ForegroundColor Red
+            $logPath = "$env:TEMP\ExplorerLens-logs\build-latest.log"
+            if (Test-Path $logPath) {
+              Get-Content $logPath | Select-String -Pattern "error C|error LNK|fatal error|FAILED:" -Context 0,2 | ForEach-Object { $_.Line } | Select-Object -Unique
             }
-            exit 1
           }
 
-      - name: Buscar y empaquetar archivos generados
+          Write-Host "=== VERIFICANDO OBJETIVOS DE CMAKE DISPONIBLES ===" -ForegroundColor Cyan
+          if (Test-Path "build\build.ninja") {
+            ninja -C build -t targets all | Select-String -Pattern "LENS|Shell|Manager|Engine"
+            Write-Host "=== COMPILANDO SOLO LENSShell Y LENSManager ===" -ForegroundColor Yellow
+            cmake --build build --config Release --target LENSShell LENSManager
+          }
+
+      - name: Empaquetar binarios y logs
+        if: always()
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           Get-ChildItem -Recurse -Include *.dll,*.exe,*.json | Where-Object { $_.FullName -notmatch "\\\.git\\" -and $_.FullName -notmatch "\\dist\\" } | Copy-Item -Destination dist -Force
+          if (Test-Path "$env:TEMP\ExplorerLens-logs\build-latest.log") {
+            Copy-Item "$env:TEMP\ExplorerLens-logs\build-latest.log" -Destination dist\build-latest.log -Force
+          }
           Get-ChildItem dist
 
-      - name: Subir ZIP descargable
+      - name: Subir resultado y logs
+        if: always()
         uses: actions/upload-artifact@v5
         with:
-          name: ExplorerLens-Windows-x64
+          name: ExplorerLens-Resultado
           path: dist/*
