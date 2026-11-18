@@ -18,7 +18,7 @@ jobs:
             --package-parameters "--add Microsoft.VisualStudio.Workload.VCTools --add Microsoft.VisualStudio.Component.VC.Tools.x86.x64 --includeRecommended --quiet" `
             -y --ignore-package-exit-codes=3010
 
-      - name: Configurar entorno
+      - name: Configurar entorno (VS + Windows SDK + VCPKG_ROOT)
         shell: pwsh
         run: |
           $vs = "C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools"
@@ -26,6 +26,17 @@ jobs:
           echo "$vs\MSBuild\Current\Bin" >> $env:GITHUB_PATH
           echo "$vs\VC\Tools\MSVC\14.52.37025\bin\Hostx64\x64" >> $env:GITHUB_PATH
           echo "VCPKG_ROOT=C:\vcpkg" >> $env:GITHUB_ENV
+
+          $sdkRoot = "C:\Program Files (x86)\Windows Kits\10"
+          $sdkVersion = (Get-ChildItem "$sdkRoot\bin" -Directory | Sort-Object Name -Descending | Select-Object -First 1).Name
+          $sdkBin = "$sdkRoot\bin\$sdkVersion\x64"
+          Write-Host "Windows SDK detectado: $sdkVersion"
+          Write-Host "Anadiendo al PATH: $sdkBin"
+          echo $sdkBin >> $env:GITHUB_PATH
+
+          if (-not (Test-Path "$sdkBin\rc.exe")) { Write-Error "rc.exe no encontrado en $sdkBin"; exit 1 }
+          if (-not (Test-Path "$sdkBin\mt.exe")) { Write-Error "mt.exe no encontrado en $sdkBin"; exit 1 }
+          Write-Host "rc.exe y mt.exe verificados." -ForegroundColor Green
 
       - name: Instalar dependencias con vcpkg
         shell: pwsh
