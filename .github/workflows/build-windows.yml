@@ -1,0 +1,38 @@
+name: Compilar ExplorerLens DLL
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Descargar codigo fuente
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Configurar entorno Visual Studio
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Compilar proyecto con script oficial
+        shell: pwsh
+        run: |
+          if (Test-Path ".\build-scripts\Build-MSVC.ps1") {
+            .\build-scripts\Build-MSVC.ps1 -Configuration Release
+          } else {
+            cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+            cmake --build build --config Release
+          }
+
+      - name: Buscar y empaquetar archivos generados
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Get-ChildItem -Recurse -Include *.dll,*.exe,*.json | Where-Object { $_.FullName -notmatch "\\\.git\\" } | Copy-Item -Destination dist -Force
+
+      - name: Subir ZIP descargable
+        uses: actions/upload-artifact@v4
+        with:
+          name: ExplorerLens-Windows-x64
+          path: dist/*
