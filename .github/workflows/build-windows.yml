@@ -8,9 +8,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Descargar codigo fuente
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
+        uses: actions/checkout@v5
 
       - name: Configurar entorno Visual Studio
         uses: ilammy/msvc-dev-cmd@v1
@@ -32,7 +30,7 @@ jobs:
           Get-ChildItem -Recurse -Include *.dll,*.exe,*.json | Where-Object { $_.FullName -notmatch "\\\.git\\" } | Copy-Item -Destination dist -Force
 
       - name: Subir ZIP descargable
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: ExplorerLens-Windows-x64
           path: dist/*
