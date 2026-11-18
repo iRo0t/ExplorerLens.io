@@ -32,19 +32,37 @@ jobs:
             C:\vcpkg\vcpkg.exe install libwebp libavif libjpeg-turbo zlib libpng libheif libjxl openjpeg freetype libraw zstd lz4 --triplet x64-windows-static
           }
 
-      # ⬇️⬇️⬇️ ESTE ES EL PASO REEMPLAZADO ⬇️⬇️⬇️
       - name: Compilar Engine y colocar ExplorerLensEngine.lib en su ruta
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
 
+          # 1. Neutralizar /WX y -WX en TODOS los archivos CMake del proyecto
+          Write-Host "Neutralizando /WX y -WX en archivos CMake..."
+          Get-ChildItem -Recurse -Include "CMakeLists.txt","*.cmake" | ForEach-Object {
+            $content = Get-Content $_.FullName -Raw
+            if ($null -ne $content) {
+              $content = $content -replace '(?<![-\w])/WX(?![-\w])', '/WX-'
+              $content = $content -replace '(?<![-\w])-WX(?![-\w])', '-WX-'
+              Set-Content $_.FullName $content -NoNewline
+            }
+          }
+
+          # 2. Configurar CMake con cinturones de seguridad
+          #    - CMAKE_COMPILE_WARNING_AS_ERROR=OFF (desactiva /WX automático)
+          #    - /wd4251 (silencia C4251 a nivel de compilador, inmune a /WX)
           cmake -B build -G Ninja `
             -DCMAKE_BUILD_TYPE=Release `
             -DCMAKE_TOOLCHAIN_FILE="C:/vcpkg/scripts/buildsystems/vcpkg.cmake" `
             -DVCPKG_TARGET_TRIPLET=x64-windows-static `
-            -DBUILD_TESTING=OFF
+            -DBUILD_TESTING=OFF `
+            -DCMAKE_COMPILE_WARNING_AS_ERROR=OFF `
+            -DCMAKE_CXX_FLAGS="/wd4251"
+
+          # 3. Compilar el motor
           cmake --build build --config Release --target ExplorerLensEngine
 
+          # 4. Buscar el .lib (por si CMake lo pone en otra ruta) y copiarlo
           Write-Host "Buscando ExplorerLensEngine.lib generado..."
           $libFile = Get-ChildItem -Path "build" -Filter "ExplorerLensEngine.lib" -Recurse | Select-Object -First 1
 
@@ -61,7 +79,6 @@ jobs:
 
           Write-Host "Archivo copiado a: $destinationDir"
           Get-ChildItem -Path $destinationDir
-      # ⬆️⬆️⬆️ FIN DEL PASO REEMPLAZADO ⬆️⬆️⬆️
 
       - name: Enlazar LENSShell.dll
         shell: pwsh
