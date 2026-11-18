@@ -32,13 +32,11 @@ jobs:
             C:\vcpkg\vcpkg.exe install libwebp libavif libjpeg-turbo zlib libpng libheif libjxl openjpeg freetype libraw zstd lz4 --triplet x64-windows-static
           }
 
+      # ⬇️⬇️⬇️ ESTE ES EL PASO REEMPLAZADO ⬇️⬇️⬇️
       - name: Compilar Engine y colocar ExplorerLensEngine.lib en su ruta
         shell: pwsh
         run: |
-          $ErrorActionPreference = "Continue"
-          Get-ChildItem -Recurse -Filter "CMakeLists.txt" | ForEach-Object {
-            (Get-Content $_.FullName) -replace '/WX\b', '/WX-' | Set-Content $_.FullName
-          }
+          $ErrorActionPreference = "Stop"
 
           cmake -B build -G Ninja `
             -DCMAKE_BUILD_TYPE=Release `
@@ -47,9 +45,23 @@ jobs:
             -DBUILD_TESTING=OFF
           cmake --build build --config Release --target ExplorerLensEngine
 
-          New-Item -ItemType Directory -Force -Path "build\lib\Release" | Out-Null
-          Get-ChildItem -Recurse -Path "build" -Filter "ExplorerLensEngine.lib" | Copy-Item -Destination "build\lib\Release\" -Force
-          Get-ChildItem "build\lib\Release\"
+          Write-Host "Buscando ExplorerLensEngine.lib generado..."
+          $libFile = Get-ChildItem -Path "build" -Filter "ExplorerLensEngine.lib" -Recurse | Select-Object -First 1
+
+          if ($null -eq $libFile) {
+            Write-Error "¡FATAL! El archivo ExplorerLensEngine.lib no se generó en ningún lugar de la carpeta 'build'."
+            exit 1
+          }
+
+          Write-Host "¡Encontrado! Ruta original: $($libFile.FullName)"
+
+          $destinationDir = "build\lib\Release"
+          New-Item -ItemType Directory -Force -Path $destinationDir | Out-Null
+          Copy-Item -Path $libFile.FullName -Destination $destinationDir -Force
+
+          Write-Host "Archivo copiado a: $destinationDir"
+          Get-ChildItem -Path $destinationDir
+      # ⬆️⬆️⬆️ FIN DEL PASO REEMPLAZADO ⬆️⬆️⬆️
 
       - name: Enlazar LENSShell.dll
         shell: pwsh
@@ -63,7 +75,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           $dlls = Get-ChildItem -Recurse -Filter "*.dll" | Where-Object { $_.FullName -notmatch "\\\.git\\" -and $_.FullName -notmatch "vcpkg" -and $_.FullName -notmatch "\\dist\\" -and $_.FullName -notmatch "\\packages\\" }
-          
+
           if ($dlls.Count -eq 0) {
             Write-Error "No se genero ningun archivo .dll"
             exit 1
