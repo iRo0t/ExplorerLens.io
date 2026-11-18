@@ -1,4 +1,4 @@
-name: Compilar LENSShell DLL (Oficial)
+name: Compilar LENSShell DLL (VS2026)
 
 on:
   workflow_dispatch:
@@ -6,42 +6,45 @@ on:
 jobs:
   build:
     runs-on: windows-latest
+
     steps:
       - name: Descargar codigo fuente
         uses: actions/checkout@v4
 
-      - name: Configurar Visual Studio 2026 (MSVC v145)
+      - name: Configurar entorno Visual Studio 2026
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
-          # El proyecto requiere VS 2026. 'windows-latest' ya lo incluye.
+          vsversion: "2026"
 
-      - name: Instalar dependencias con vcpkg (preset vcpkg-release)
+      - name: Configurar VCPKG_ROOT
         shell: pwsh
         run: |
-          # El preset 'vcpkg-release' usara VCPKG_ROOT para encontrar las librerias.
-          # Instalamos las dependencias del vcpkg.json del proyecto.
-          C:\vcpkg\vcpkg.exe install --triplet x64-windows-static-md
+          echo "VCPKG_ROOT=C:\vcpkg" >> $env:GITHUB_ENV
+          Write-Host "VCPKG_ROOT configurado en: $env:VCPKG_ROOT"
+
+      - name: Instalar dependencias con vcpkg
+        shell: pwsh
+        run: |
+          if (Test-Path "vcpkg.json") {
+            C:\vcpkg\vcpkg.exe install --triplet x64-windows-static-md
+          } else {
+            C:\vcpkg\vcpkg.exe install libwebp libavif libjpeg-turbo zlib libpng libheif libjxl openjpeg freetype libraw zstd lz4 --triplet x64-windows-static-md
+          }
           if ($LASTEXITCODE -ne 0) { Write-Error "vcpkg install fallo"; exit 1 }
 
       - name: Compilar con el script oficial (preset vcpkg-release)
         shell: pwsh
         run: |
-          # El script Build-MSVC.ps1 maneja toda la logica de CMake, Ninja y las rutas.
           .\build-scripts\Build-MSVC.ps1 -Preset vcpkg-release -Clean
           if ($LASTEXITCODE -ne 0) { Write-Error "Build-MSVC.ps1 fallo"; exit 1 }
 
       - name: Localizar el DLL generado
         shell: pwsh
         run: |
-          # El CMakeLists define la salida en build/bin/ o build/bin/Release/
-          $dll = Get-ChildItem -Path . -Filter "LENSShell.dll" -Recurse | Select-Object -First 1
-          if ($null -eq $dll) {
-            Write-Error "No se encontro LENSShell.dll"
-            exit 1
-          }
+          $dll = Get-ChildItem -Path . -Filter "LENSShell.dll" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($null -eq $dll) { Write-Error "No se encontro LENSShell.dll"; exit 1 }
           Write-Host "DLL encontrado en: $($dll.FullName) ($($dll.Length) bytes)"
-          # Copiar a una carpeta 'dist' para el artifact
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           Copy-Item $dll.FullName -Destination dist -Force
 
