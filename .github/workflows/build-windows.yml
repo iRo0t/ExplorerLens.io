@@ -1,4 +1,4 @@
-name: Compilar LENSShell DLL Funcional
+name: Compilar LENSShell DLL (Oficial)
 
 on:
   workflow_dispatch:
@@ -8,105 +8,45 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Descargar codigo fuente
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
 
-      - name: Configurar entorno Visual Studio
+      - name: Configurar Visual Studio 2026 (MSVC v145)
         uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+          # El proyecto requiere VS 2026. 'windows-latest' ya lo incluye.
 
-      - name: Restaurar paquetes NuGet (WTL)
+      - name: Instalar dependencias con vcpkg (preset vcpkg-release)
         shell: pwsh
         run: |
-          $sln = Get-ChildItem -Recurse -Filter "*.sln" | Select-Object -First 1
-          if ($sln) {
-            nuget restore $sln.FullName
-          } else {
-            nuget install wtl -Version 10.0.10320 -OutputDirectory packages
-          }
+          # El preset 'vcpkg-release' usara VCPKG_ROOT para encontrar las librerias.
+          # Instalamos las dependencias del vcpkg.json del proyecto.
+          C:\vcpkg\vcpkg.exe install --triplet x64-windows-static-md
+          if ($LASTEXITCODE -ne 0) { Write-Error "vcpkg install fallo"; exit 1 }
 
-      - name: Instalar decodificadores con vcpkg
+      - name: Compilar con el script oficial (preset vcpkg-release)
         shell: pwsh
         run: |
-          if (Test-Path "vcpkg.json") {
-            C:\vcpkg\vcpkg.exe install --triplet x64-windows-static
-          } else {
-            C:\vcpkg\vcpkg.exe install libwebp libavif libjpeg-turbo zlib libpng libheif libjxl openjpeg freetype libraw zstd lz4 --triplet x64-windows-static
-          }
+          # El script Build-MSVC.ps1 maneja toda la logica de CMake, Ninja y las rutas.
+          .\build-scripts\Build-MSVC.ps1 -Preset vcpkg-release -Clean
+          if ($LASTEXITCODE -ne 0) { Write-Error "Build-MSVC.ps1 fallo"; exit 1 }
 
-      - name: Compilar Engine y colocar ExplorerLensEngine.lib en su ruta
+      - name: Localizar el DLL generado
         shell: pwsh
         run: |
-          $ErrorActionPreference = "Stop"
-
-          # 1. Neutralizar /WX y -WX en TODOS los archivos CMake del proyecto
-          Write-Host "Neutralizando /WX y -WX en archivos CMake..."
-          Get-ChildItem -Recurse -Include "CMakeLists.txt","*.cmake" | ForEach-Object {
-            $content = Get-Content $_.FullName -Raw
-            if ($null -ne $content) {
-              $content = $content -replace '(?<![-\w])/WX(?![-\w])', '/WX-'
-              $content = $content -replace '(?<![-\w])-WX(?![-\w])', '-WX-'
-              Set-Content $_.FullName $content -NoNewline
-            }
-          }
-
-          # 2. Configurar CMake con cinturones de seguridad
-          #    - CMAKE_COMPILE_WARNING_AS_ERROR=OFF (desactiva /WX automático)
-          #    - /wd4251 (silencia C4251 a nivel de compilador, inmune a /WX)
-          cmake -B build -G Ninja `
-              -DCMAKE_BUILD_TYPE=Release `
-              -DCMAKE_TOOLCHAIN_FILE="C:/vcpkg/scripts/buildsystems/vcpkg.cmake" `
-              -DVCPKG_TARGET_TRIPLET=x64-windows-static `
-              -DBUILD_TESTING=OFF `
-              -DCMAKE_COMPILE_WARNING_AS_ERROR=OFF `
-              -DCMAKE_CXX_FLAGS="/wd4251" `
-              -DCMAKE_SHARED_LINKER_FLAGS="/LIBPATH:C:\vcpkg\installed\x64-windows-static\lib"
-
-          # 3. Compilar el motor
-          cmake --build build --config Release --target ExplorerLensEngine
-
-          # 4. Buscar el .lib (por si CMake lo pone en otra ruta) y copiarlo
-          Write-Host "Buscando ExplorerLensEngine.lib generado..."
-          $libFile = Get-ChildItem -Path "build" -Filter "ExplorerLensEngine.lib" -Recurse | Select-Object -First 1
-
-          if ($null -eq $libFile) {
-            Write-Error "¡FATAL! El archivo ExplorerLensEngine.lib no se generó en ningún lugar de la carpeta 'build'."
+          # El CMakeLists define la salida en build/bin/ o build/bin/Release/
+          $dll = Get-ChildItem -Path . -Filter "LENSShell.dll" -Recurse | Select-Object -First 1
+          if ($null -eq $dll) {
+            Write-Error "No se encontro LENSShell.dll"
             exit 1
           }
-
-          Write-Host "¡Encontrado! Ruta original: $($libFile.FullName)"
-
-          $destinationDir = "build\lib\Release"
-          New-Item -ItemType Directory -Force -Path $destinationDir | Out-Null
-          Copy-Item -Path $libFile.FullName -Destination $destinationDir -Force
-
-          Write-Host "Archivo copiado a: $destinationDir"
-          Get-ChildItem -Path $destinationDir
-
-      - name: Enlazar LENSShell.dll
-        shell: pwsh
-        run: |
-          $env:LIB = "C:\vcpkg\installed\x64-windows-static\lib;" + $env:LIB
-          $shellProj = Get-ChildItem -Recurse -Filter "*LENSShell*.vcxproj" | Select-Object -First 1
-          msbuild $shellProj.FullName /p:Configuration=Release /p:Platform=x64 /p:TreatWarningAsError=false /p:AdditionalLibraryDirectories="C:\vcpkg\installed\x64-windows-static\lib"
-
-      - name: Verificar que LENSShell.dll sea valida y funcional
-        shell: pwsh
-        run: |
+          Write-Host "DLL encontrado en: $($dll.FullName) ($($dll.Length) bytes)"
+          # Copiar a una carpeta 'dist' para el artifact
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          $dlls = Get-ChildItem -Recurse -Filter "*.dll" | Where-Object { $_.FullName -notmatch "\\\.git\\" -and $_.FullName -notmatch "vcpkg" -and $_.FullName -notmatch "\\dist\\" -and $_.FullName -notmatch "\\packages\\" }
-
-          if ($dlls.Count -eq 0) {
-            Write-Error "No se genero ningun archivo .dll"
-            exit 1
-          }
-
-          foreach ($dll in $dlls) {
-            Write-Host "=== VERIFICANDO EXPORTS DE: $($dll.Name) ($($dll.Length) bytes) ===" -ForegroundColor Green
-            dumpbin /exports $dll.FullName
-            Copy-Item $dll.FullName -Destination dist -Force
-          }
+          Copy-Item $dll.FullName -Destination dist -Force
 
       - name: Subir DLL verificada
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v4
         with:
           name: LENSShell-DLL-x64
           path: dist/*.dll
