@@ -23,39 +23,40 @@ jobs:
             nuget install wtl -Version 10.0.10320 -OutputDirectory packages
           }
 
-      - name: Instalar decodificadores reales con vcpkg
+      - name: Instalar decodificadores con vcpkg
         shell: pwsh
         run: |
           if (Test-Path "vcpkg.json") {
             C:\vcpkg\vcpkg.exe install --triplet x64-windows-static
           } else {
-            C:\vcpkg\vcpkg.exe install libwebp libavif libjpeg-turbo zlib libpng --triplet x64-windows-static
+            C:\vcpkg\vcpkg.exe install libwebp libavif libjpeg-turbo zlib libpng libheif libjxl openjpeg freetype libraw zstd lz4 --triplet x64-windows-static
           }
 
-      - name: Compilar Engine y LENSShell.dll
+      - name: Compilar Engine y colocar ExplorerLensEngine.lib en su ruta
         shell: pwsh
         run: |
           $ErrorActionPreference = "Continue"
-
-          # Quitar /WX forzado de los CMakeLists.txt para evitar falsos errores por warnings
           Get-ChildItem -Recurse -Filter "CMakeLists.txt" | ForEach-Object {
             (Get-Content $_.FullName) -replace '/WX\b', '/WX-' | Set-Content $_.FullName
           }
 
-          # 1. Compilar el motor principal (sin tests)
-          cmake -B build-engine -G Ninja `
+          cmake -B build -G Ninja `
             -DCMAKE_BUILD_TYPE=Release `
             -DCMAKE_TOOLCHAIN_FILE="C:/vcpkg/scripts/buildsystems/vcpkg.cmake" `
             -DVCPKG_TARGET_TRIPLET=x64-windows-static `
             -DBUILD_TESTING=OFF
-          cmake --build build-engine --config Release --target ExplorerLensEngine
+          cmake --build build --config Release --target ExplorerLensEngine
 
-          # 2. Compilar exclusivamente el proyecto LENSShell
+          New-Item -ItemType Directory -Force -Path "build\lib\Release" | Out-Null
+          Get-ChildItem -Recurse -Path "build" -Filter "ExplorerLensEngine.lib" | Copy-Item -Destination "build\lib\Release\" -Force
+          Get-ChildItem "build\lib\Release\"
+
+      - name: Enlazar LENSShell.dll
+        shell: pwsh
+        run: |
+          $env:LIB = "C:\vcpkg\installed\x64-windows-static\lib;" + $env:LIB
           $shellProj = Get-ChildItem -Recurse -Filter "*LENSShell*.vcxproj" | Select-Object -First 1
-          if ($shellProj) {
-            Write-Host "=== COMPILANDO PROYECTO SHELL: $($shellProj.FullName) ===" -ForegroundColor Cyan
-            msbuild $shellProj.FullName /p:Configuration=Release /p:Platform=x64 /p:TreatWarningAsError=false /p:VcpkgEnabled=true /p:VcpkgTriplet=x64-windows-static
-          }
+          msbuild $shellProj.FullName /p:Configuration=Release /p:Platform=x64 /p:TreatWarningAsError=false /p:AdditionalLibraryDirectories="C:\vcpkg\installed\x64-windows-static\lib"
 
       - name: Verificar que LENSShell.dll sea valida y funcional
         shell: pwsh
