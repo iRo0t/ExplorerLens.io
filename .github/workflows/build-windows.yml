@@ -13,6 +13,16 @@ jobs:
       - name: Configurar entorno Visual Studio
         uses: ilammy/msvc-dev-cmd@v1
 
+      - name: Restaurar paquetes NuGet (WTL)
+        shell: pwsh
+        run: |
+          $sln = Get-ChildItem -Recurse -Filter "*.sln" | Select-Object -First 1
+          if ($sln) {
+            nuget restore $sln.FullName
+          } else {
+            nuget install wtl -Version 10.0.10320 -OutputDirectory packages
+          }
+
       - name: Instalar decodificadores reales con vcpkg
         shell: pwsh
         run: |
@@ -26,35 +36,32 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Continue"
-          $env:CL = "/WX-"
+
+          # Quitar /WX forzado de los CMakeLists.txt para evitar falsos errores por warnings
+          Get-ChildItem -Recurse -Filter "CMakeLists.txt" | ForEach-Object {
+            (Get-Content $_.FullName) -replace '/WX\b', '/WX-' | Set-Content $_.FullName
+          }
 
           # 1. Compilar el motor principal (sin tests)
           cmake -B build-engine -G Ninja `
             -DCMAKE_BUILD_TYPE=Release `
             -DCMAKE_TOOLCHAIN_FILE="C:/vcpkg/scripts/buildsystems/vcpkg.cmake" `
             -DVCPKG_TARGET_TRIPLET=x64-windows-static `
-            -DCMAKE_CXX_FLAGS="/WX- /EHsc" `
             -DBUILD_TESTING=OFF
-          cmake --build build-engine --config Release
+          cmake --build build-engine --config Release --target ExplorerLensEngine
 
-          # 2. Compilar exclusivamente el proyecto LENSShell (.vcxproj o .sln)
+          # 2. Compilar exclusivamente el proyecto LENSShell
           $shellProj = Get-ChildItem -Recurse -Filter "*LENSShell*.vcxproj" | Select-Object -First 1
           if ($shellProj) {
             Write-Host "=== COMPILANDO PROYECTO SHELL: $($shellProj.FullName) ===" -ForegroundColor Cyan
             msbuild $shellProj.FullName /p:Configuration=Release /p:Platform=x64 /p:TreatWarningAsError=false /p:VcpkgEnabled=true /p:VcpkgTriplet=x64-windows-static
-          } else {
-            $sln = Get-ChildItem -Recurse -Filter "*.sln" | Select-Object -First 1
-            if ($sln) {
-              Write-Host "=== COMPILANDO TARGET LENSShell EN SLN ===" -ForegroundColor Cyan
-              msbuild $sln.FullName /t:LENSShell /p:Configuration=Release /p:Platform=x64 /p:TreatWarningAsError=false /p:VcpkgEnabled=true /p:VcpkgTriplet=x64-windows-static
-            }
           }
 
       - name: Verificar que LENSShell.dll sea valida y funcional
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          $dlls = Get-ChildItem -Recurse -Filter "*.dll" | Where-Object { $_.FullName -notmatch "\\\.git\\" -and $_.FullName -notmatch "vcpkg" -and $_.FullName -notmatch "\\dist\\" }
+          $dlls = Get-ChildItem -Recurse -Filter "*.dll" | Where-Object { $_.FullName -notmatch "\\\.git\\" -and $_.FullName -notmatch "vcpkg" -and $_.FullName -notmatch "\\dist\\" -and $_.FullName -notmatch "\\packages\\" }
           
           if ($dlls.Count -eq 0) {
             Write-Error "No se genero ningun archivo .dll"
