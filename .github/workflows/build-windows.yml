@@ -28,7 +28,15 @@ jobs:
           echo "VCPKG_ROOT=C:\vcpkg" >> $env:GITHUB_ENV
 
           $sdkRoot = "C:\Program Files (x86)\Windows Kits\10"
-          $sdkVersion = (Get-ChildItem "$sdkRoot\bin" -Directory | Sort-Object Name -Descending | Select-Object -First 1).Name
+          # FIX: filtrar solo carpetas de version (empiezan por '10.')
+          $sdkVersion = (Get-ChildItem "$sdkRoot\bin" -Directory |
+                         Where-Object { $_.Name -like '10.*' } |
+                         Sort-Object Name -Descending |
+                         Select-Object -First 1).Name
+          if ([string]::IsNullOrWhiteSpace($sdkVersion)) {
+            Write-Error "No se encontro ninguna version del Windows SDK en $sdkRoot\bin"
+            exit 1
+          }
           $sdkBin = "$sdkRoot\bin\$sdkVersion\x64"
           Write-Host "Windows SDK detectado: $sdkVersion"
           Write-Host "Anadiendo al PATH: $sdkBin"
