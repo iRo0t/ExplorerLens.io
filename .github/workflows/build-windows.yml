@@ -5,7 +5,8 @@ on:
 
 jobs:
   build:
-    runs-on: windows-latest
+    # 🎯 CLAVE: Usar la imagen que SÍ tiene Visual Studio 2026
+    runs-on: windows-2025-vs2026
 
     steps:
       - name: Descargar codigo fuente
@@ -15,7 +16,7 @@ jobs:
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
-          vsversion: "2026"
+          vsversion: "2026"   # Fuerza la búsqueda de VS 2026
 
       - name: Configurar VCPKG_ROOT
         shell: pwsh
