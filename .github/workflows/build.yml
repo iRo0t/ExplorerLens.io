@@ -1,4 +1,4 @@
-﻿# build.yml — Manual / scheduled verification build for ExplorerLens Engine
+# build.yml — Manual / scheduled verification build for ExplorerLens Engine
 # Copyright (c) 2026 ExplorerLens Project
 #
 # NOTE: ci-matrix.yml is the canonical PR/push CI for ExplorerLens.
@@ -65,38 +65,31 @@ jobs:
         with:
           arch: x64
 
-      # ── sccache — compiler cache for faster rebuilds ─────────
-      - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.7
+      # ── sccache DESACTIVADO ───────────────────────────────────
+      # El backend ghac de GitHub Actions devuelve 400 ("services aren't
+      # available") de forma intermitente y rompe el check del compilador
+      # de CMake (sccache: error: Server startup failed). Sin sccache el
+      # build es mas lento pero determinista y no depende de ese servicio.
+      # - name: Setup sccache
+      #   uses: mozilla-actions/sccache-action@v0.0.7
+      #
+      # - name: Configure sccache environment
+      #   shell: pwsh
+      #   run: |
+      #     echo "CMAKE_C_COMPILER_LAUNCHER=sccache" >> $env:GITHUB_ENV
+      #     echo "CMAKE_CXX_COMPILER_LAUNCHER=sccache" >> $env:GITHUB_ENV
+      #     echo "SCCACHE_GHA_ENABLED=true" >> $env:GITHUB_ENV
 
-      - name: Configure sccache environment
+      # ── Pre-crear directorios de salida para libs externas ────
+      # Workaround: la accion build-external-libs usa
+      # New-Item -ItemType Directory -Force $destDir | Out-Null
+      # sin -ErrorAction Stop. Si existe un archivo bloqueante en
+      # algun ancestro de la ruta, New-Item falla en silencio y
+      # lib.exe revienta con LNK1104. Pre-crear aqui (borrando
+      # cualquier archivo bloqueante) evita el problema.
+      - name: Pre-crear directorios de libs externas
         shell: pwsh
         run: |
-          echo "CMAKE_C_COMPILER_LAUNCHER=sccache" >> $env:GITHUB_ENV
-          echo "CMAKE_CXX_COMPILER_LAUNCHER=sccache" >> $env:GITHUB_ENV
-          echo "SCCACHE_GHA_ENABLED=true" >> $env:GITHUB_ENV
-
-      - name: Pre-crear directorios de libs externas (robusto)
-        shell: pwsh
-        run: |
-          Write-Host "=== DIAGNOSTICO: estado de external/compression-libs ==="
-          if (Test-Path "external/compression-libs") {
-            Get-ChildItem "external/compression-libs" -Force | ForEach-Object {
-              Write-Host "  $($_.Name)  Container=$($_.PSIsContainer)  Mode=$($_.Mode)"
-            }
-            if (Test-Path "external/compression-libs/lz4-1.10.0") {
-              Write-Host "--- lz4-1.10.0 ---"
-              Get-ChildItem "external/compression-libs/lz4-1.10.0" -Force | ForEach-Object {
-                Write-Host "  $($_.Name)  Container=$($_.PSIsContainer)  Mode=$($_.Mode)"
-              }
-            } else {
-              Write-Host "  lz4-1.10.0 NO EXISTE"
-            }
-          } else {
-            Write-Host "  external/compression-libs NO EXISTE"
-          }
-          Write-Host ""
-
           $dirs = @(
             'external/compression-libs/zlib-1.3.1/install/lib',
             'external/compression-libs/lz4-1.10.0/install/lib',
@@ -106,25 +99,25 @@ jobs:
             'external/camera-libs/libraw-install/lib',
             'external/camera-libs/libraw-install/include'
           )
-
           foreach ($d in $dirs) {
-            Write-Host "Procesando: $d"
             # Recorrer TODOS los ancestros y eliminar cualquier archivo que bloquee
             $parts = $d -split '[/\\]'
             $cur = ''
             foreach ($part in $parts) {
               $cur = if ($cur) { "$cur/$part" } else { $part }
               if (Test-Path $cur -PathType Leaf) {
-                Write-Host "  Removiendo archivo bloqueante: $cur" -ForegroundColor Yellow
+                Write-Host "Removiendo archivo bloqueante: $cur" -ForegroundColor Yellow
                 Remove-Item $cur -Force -ErrorAction Stop
               }
             }
             New-Item -ItemType Directory -Path $d -Force -ErrorAction Stop | Out-Null
             if (-not (Test-Path $d -PathType Container)) {
-              throw "No se pudo crear: $d"
+              Write-Error "No se pudo crear el directorio: $d"
+              exit 1
             }
-            Write-Host "  OK: $d" -ForegroundColor Green
+            Write-Host "OK: $d" -ForegroundColor Green
           }
+
       # ── Build external libraries from source (cache miss path) ──────────────
       # Never commit pre-built .lib files — they corrupt across MSVC versions.
       # Source trees live in external/; this action builds only what's missing.
