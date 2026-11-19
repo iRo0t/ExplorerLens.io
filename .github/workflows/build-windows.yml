@@ -1,4 +1,4 @@
-name: Compilar LENSShell DLL (vcpkg + VS2026)
+name: Compilar LENSShell DLL (método oficial)
 
 on:
   workflow_dispatch:
@@ -11,158 +11,35 @@ jobs:
       - name: Descargar codigo fuente
         uses: actions/checkout@v4
 
-      - name: Instalar VS 2026 Build Tools
+      - name: Compilar librerias externas (solo primera vez)
         shell: pwsh
         run: |
-          choco install visualstudio2026buildtools `
-            --package-parameters "--add Microsoft.VisualStudio.Workload.VCTools --add Microsoft.VisualStudio.Component.VC.Tools.x86.x64 --includeRecommended --quiet" `
-            -y --ignore-package-exit-codes=3010
+          # Segun QUICK_START.md, esto prepara external/ antes del Engine
+          .\build-scripts\Update-All-Libraries.ps1
+          if ($LASTEXITCODE -ne 0) { Write-Error "Update-All-Libraries fallo"; exit 1 }
 
-      - name: Configurar entorno (VS + Windows SDK + VCPKG_ROOT)
+      - name: Compilar Engine con script oficial (vcvars + cmake + ninja)
         shell: pwsh
         run: |
-          $vs = "C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools"
-          echo "$vs\Common7\Tools" >> $env:GITHUB_PATH
-          echo "$vs\MSBuild\Current\Bin" >> $env:GITHUB_PATH
-          echo "$vs\VC\Tools\MSVC\14.52.37025\bin\Hostx64\x64" >> $env:GITHUB_PATH
-          echo "VCPKG_ROOT=C:\vcpkg" >> $env:GITHUB_ENV
+          # Build-MSVC.ps1 configura el entorno automaticamente
+          .\build-scripts\Build-MSVC.ps1 -Clean
+          if ($LASTEXITCODE -ne 0) { Write-Error "Build-MSVC.ps1 fallo"; exit 1 }
 
-          $sdkRoot = "C:\Program Files (x86)\Windows Kits\10"
-          # FIX: filtrar solo carpetas de version (empiezan por '10.')
-          $sdkVersion = (Get-ChildItem "$sdkRoot\bin" -Directory |
-                         Where-Object { $_.Name -like '10.*' } |
-                         Sort-Object Name -Descending |
-                         Select-Object -First 1).Name
-          if ([string]::IsNullOrWhiteSpace($sdkVersion)) {
-            Write-Error "No se encontro ninguna version del Windows SDK en $sdkRoot\bin"
-            exit 1
-          }
-          $sdkBin = "$sdkRoot\bin\$sdkVersion\x64"
-          Write-Host "Windows SDK detectado: $sdkVersion"
-          Write-Host "Anadiendo al PATH: $sdkBin"
-          echo $sdkBin >> $env:GITHUB_PATH
-
-          if (-not (Test-Path "$sdkBin\rc.exe")) { Write-Error "rc.exe no encontrado en $sdkBin"; exit 1 }
-          if (-not (Test-Path "$sdkBin\mt.exe")) { Write-Error "mt.exe no encontrado en $sdkBin"; exit 1 }
-          Write-Host "rc.exe y mt.exe verificados." -ForegroundColor Green
-
-      - name: Instalar dependencias con vcpkg
+      - name: Compilar Shell Extension + Manager con MSBuild
         shell: pwsh
         run: |
-          C:\vcpkg\vcpkg.exe install --triplet x64-windows-static-md
-          if ($LASTEXITCODE -ne 0) { Write-Error "vcpkg install fallo"; exit 1 }
-
-      - name: Configurar y compilar Engine (sin tests, con features)
-        shell: pwsh
-        run: |
-          cmake --preset vcpkg-release `
-            -DBUILD_TESTS=OFF `
-            -DBUILD_BENCHMARKS=OFF `
-            -DCMAKE_COMPILE_WARNING_AS_ERROR=OFF `
-            -DHAS_LIBJXL=ON `
-            -DHAS_LIBHEIF=ON `
-            -DHAS_LIBRAW=ON `
-            -DHAS_LIBAVIF=ON
-          if ($LASTEXITCODE -ne 0) { Write-Error "cmake configure fallo"; exit 1 }
-
-          cmake --build --preset vcpkg-release --target ExplorerLensEngine
-          if ($LASTEXITCODE -ne 0) { Write-Error "cmake build fallo"; exit 1 }
-
-      - name: Localizar y copiar ExplorerLensEngine.lib
-        shell: pwsh
-        run: |
-          $lib = Get-ChildItem -Path . -Filter "ExplorerLensEngine.lib" -Recurse | Select-Object -First 1
-          if ($null -eq $lib) { Write-Error "ExplorerLensEngine.lib no generado"; exit 1 }
-          Write-Host "Encontrado: $($lib.FullName) ($($lib.Length) bytes)"
-          $dest = "build\lib\Release"
-          New-Item -ItemType Directory -Force -Path $dest | Out-Null
-          Copy-Item $lib.FullName -Destination $dest -Force
-
-      - name: Staging de libs vcpkg para el shell
-        shell: pwsh
-        run: |
-          $vcpkgLibDirs = @(
-            "$PWD/build/vcpkg_installed/x64-windows-static-md/lib",
-            "C:/vcpkg/installed/x64-windows-static-md/lib"
-          ) | Where-Object { Test-Path $_ }
-          if ($vcpkgLibDirs.Count -eq 0) { Write-Error "No vcpkg libs"; exit 1 }
-
-          $staging = "$PWD/staging-lib"
-          New-Item -ItemType Directory -Force -Path $staging | Out-Null
-
-          $expected = @(
-            'zlibstatic.lib','liblz4_static.lib','zstd_static.lib','minizip.lib',
-            'webp.lib','sharpyuv.lib','libraw_static.lib',
-            'jxl.lib','jxl_cms.lib','jxl_threads.lib','brotlidec.lib','brotlicommon.lib','hwy.lib',
-            'heif.lib','de265.lib','avif.lib','dav1d.lib',
-            'libmupdf.lib','libthirdparty.lib','libresources.lib','libharfbuzz.lib','libextract.lib','libpkcs7.lib',
-            'openjp2.lib','freetype.lib'
-          )
-
-          $missing = @()
-          foreach ($lib in $expected) {
-            $found = $false
-            $variants = @(
-              $lib,
-              ($lib -replace '_?static\.lib$','.lib'),
-              ('lib' + ($lib -replace '^lib','')),
-              (($lib -replace '^lib','') -replace '_?static\.lib$','.lib')
-            ) | Select-Object -Unique
-
-            foreach ($v in $variants) {
-              foreach ($d in $vcpkgLibDirs) {
-                $p = Join-Path $d $v
-                if (Test-Path $p) {
-                  Copy-Item $p (Join-Path $staging $lib) -Force
-                  $found = $true
-                  break
-                }
-              }
-              if ($found) { break }
-            }
-            if (-not $found) { $missing += $lib }
-          }
-
-          Get-ChildItem $staging | Select-Object Name, Length | Format-Table
-
-          if ($missing.Count -gt 0) {
-            Write-Host "FALTAN en vcpkg: $($missing -join ', ')" -ForegroundColor Yellow
-          }
-
-      - name: Enlazar LENSShell.dll con msbuild
-        shell: pwsh
-        run: |
-          $vcpkgLibDirs = @(
-            "$PWD/build/vcpkg_installed/x64-windows-static-md/lib",
-            "C:/vcpkg/installed/x64-windows-static-md/lib"
-          ) | Where-Object { Test-Path $_ }
-          $staging = "$PWD/staging-lib"
-
-          $env:LIB = "$staging;" + (($vcpkgLibDirs | ForEach-Object { $_ }) -join ";") + ";" + $env:LIB
-
-          $shellProj = Get-ChildItem -Recurse -Filter "*LENSShell*.vcxproj" | Select-Object -First 1
-          if ($null -eq $shellProj) { Write-Error "No vcxproj"; exit 1 }
-          Write-Host "Proyecto: $($shellProj.FullName)"
-
-          msbuild $shellProj.FullName `
-            /p:Configuration=Release `
-            /p:Platform=x64 `
-            /p:TreatWarningAsError=false
-          if ($LASTEXITCODE -ne 0) { Write-Error "msbuild fallo: $LASTEXITCODE"; exit 1 }
+          msbuild LENSShell.sln /p:Configuration=Release /p:Platform=x64 /m /v:minimal
+          if ($LASTEXITCODE -ne 0) { Write-Error "msbuild fallo"; exit 1 }
 
       - name: Verificar y subir LENSShell.dll
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          $dlls = Get-ChildItem -Recurse -Filter "LENSShell.dll" | Where-Object {
-            $_.FullName -notmatch "vcpkg" -and $_.FullName -notmatch "staging"
-          }
-          if (@($dlls).Count -eq 0) { Write-Error "No se genero LENSShell.dll"; exit 1 }
-          foreach ($dll in $dlls) {
-            Write-Host "DLL: $($dll.FullName) ($($dll.Length) bytes)"
-            dumpbin /exports $dll.FullName
-            Copy-Item $dll.FullName -Destination dist -Force
-          }
+          $dll = Get-ChildItem -Path . -Filter "LENSShell.dll" -Recurse | Select-Object -First 1
+          if ($null -eq $dll) { Write-Error "No se genero LENSShell.dll"; exit 1 }
+          Write-Host "DLL: $($dll.FullName) ($($dll.Length) bytes)"
+          dumpbin /exports $dll.FullName
+          Copy-Item $dll.FullName -Destination dist -Force
 
       - name: Subir artifact
         uses: actions/upload-artifact@v4
