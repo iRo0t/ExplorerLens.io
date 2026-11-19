@@ -76,10 +76,27 @@ jobs:
           echo "CMAKE_CXX_COMPILER_LAUNCHER=sccache" >> $env:GITHUB_ENV
           echo "SCCACHE_GHA_ENABLED=true" >> $env:GITHUB_ENV
 
-            # ⬇️ NUEVO STEP AQUI — entre Configure sccache y Build external libraries
-      - name: Pre-crear directorios de libs externas
+      - name: Pre-crear directorios de libs externas (robusto)
         shell: pwsh
         run: |
+          Write-Host "=== DIAGNOSTICO: estado de external/compression-libs ==="
+          if (Test-Path "external/compression-libs") {
+            Get-ChildItem "external/compression-libs" -Force | ForEach-Object {
+              Write-Host "  $($_.Name)  Container=$($_.PSIsContainer)  Mode=$($_.Mode)"
+            }
+            if (Test-Path "external/compression-libs/lz4-1.10.0") {
+              Write-Host "--- lz4-1.10.0 ---"
+              Get-ChildItem "external/compression-libs/lz4-1.10.0" -Force | ForEach-Object {
+                Write-Host "  $($_.Name)  Container=$($_.PSIsContainer)  Mode=$($_.Mode)"
+              }
+            } else {
+              Write-Host "  lz4-1.10.0 NO EXISTE"
+            }
+          } else {
+            Write-Host "  external/compression-libs NO EXISTE"
+          }
+          Write-Host ""
+
           $dirs = @(
             'external/compression-libs/zlib-1.3.1/install/lib',
             'external/compression-libs/lz4-1.10.0/install/lib',
@@ -89,20 +106,25 @@ jobs:
             'external/camera-libs/libraw-install/lib',
             'external/camera-libs/libraw-install/include'
           )
+
           foreach ($d in $dirs) {
-            if (Test-Path $d -PathType Leaf) {
-              Write-Host "Eliminando archivo en ruta de directorio: $d"
-              Remove-Item $d -Force
+            Write-Host "Procesando: $d"
+            # Recorrer TODOS los ancestros y eliminar cualquier archivo que bloquee
+            $parts = $d -split '[/\\]'
+            $cur = ''
+            foreach ($part in $parts) {
+              $cur = if ($cur) { "$cur/$part" } else { $part }
+              if (Test-Path $cur -PathType Leaf) {
+                Write-Host "  Removiendo archivo bloqueante: $cur" -ForegroundColor Yellow
+                Remove-Item $cur -Force -ErrorAction Stop
+              }
             }
             New-Item -ItemType Directory -Path $d -Force -ErrorAction Stop | Out-Null
             if (-not (Test-Path $d -PathType Container)) {
-              Write-Error "No se pudo crear el directorio: $d"
-              exit 1
+              throw "No se pudo crear: $d"
             }
-            Write-Host "OK: $d"
+            Write-Host "  OK: $d" -ForegroundColor Green
           }
-      # ⬆️ FIN DEL NUEVO STEP
-
       # ── Build external libraries from source (cache miss path) ──────────────
       # Never commit pre-built .lib files — they corrupt across MSVC versions.
       # Source trees live in external/; this action builds only what's missing.
